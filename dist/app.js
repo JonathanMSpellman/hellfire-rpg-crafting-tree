@@ -3,6 +3,9 @@ const TREE_ORIENTATION = Object.freeze({
   FLIPPED_SOURCE: 'flipped-source',
 });
 
+// The item selected on first load when no #code is in the URL.
+const DEFAULT_ITEM_CODE = normalizeCode('I09B');
+
 const PLAYER_ITEM_ALLOWLIST = new Set([
   'Aeternalis Crystal (Arcane Mage Tier 4)',
   'Arrow of the Void (Ranger Tier 4)',
@@ -48,7 +51,6 @@ const state = {
     x: 32,
     y: 32,
     drag: null,
-    ignoreClickUntil: 0,
   },
 };
 
@@ -103,7 +105,7 @@ async function boot() {
     const requestedCode = normalizeCode(location.hash.slice(1));
     const requested = state.indexes.byCode.get(requestedCode);
     const initial = requested?.recipe?.length && isPlayerFacing(requested)
-      ? requested : state.data.craftedItems.find((item) => item.name === 'Injustice Smasher') || state.data.craftedItems[0];
+      ? requested : state.indexes.byCode.get(DEFAULT_ITEM_CODE) || state.data.craftedItems[0];
     if (!initial) throw new Error('No crafted items were found in the map export.');
     selectItem(initial, { updateHash: !requestedCode });
   } catch (error) {
@@ -123,6 +125,21 @@ function validateDataSchema(data) {
 }
 
 function bindInteractions() {
+  if (elements.selectedCard) {
+    elements.selectedCard.setAttribute('role', 'button');
+    elements.selectedCard.setAttribute('tabindex', '0');
+    elements.selectedCard.setAttribute('aria-label', 'Open selected item details');
+    elements.selectedCard.addEventListener('click', () => {
+      if (state.ui.selected) showItemDetails(state.ui.selected);
+    });
+    elements.selectedCard.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        if (state.ui.selected) showItemDetails(state.ui.selected);
+      }
+    });
+  }
+
   if (elements.summaryTabMaterials && elements.summaryTabNested) {
     elements.summaryTabMaterials.addEventListener('click', () => {
       state.summaryTab = 'materials';
@@ -316,8 +333,8 @@ function closeResults() {
 }
 
 function selectItem(item, options = {}) {
-  const nextCode = normalizeCode(item?.rawCode) || normalizeText(item?.name);
-  const currentCode = normalizeCode(state.ui.selected?.rawCode) || normalizeText(state.ui.selected?.name);
+  const nextCode = itemKey(item);
+  const currentCode = itemKey(state.ui.selected);
   if (nextCode && nextCode !== currentCode) beginQuickViewRecipe(item);
   state.ui.selected = item;
   state.nestedExpanded.clear();
@@ -340,6 +357,42 @@ function renderSelectedCard(item) {
   copy.append(title, meta); elements.selectedCard.append(copy);
   const stats = recipeStats(item);
   elements.metrics.replaceChildren(metric(stats.depth, 'Layers'), metric(stats.nodes, 'Tree items'), metric(stats.baseTypes, 'Base types'));
+}
+
+// Shared collapse/expand toggle for a node's already-rendered `<ul>` of children.
+// `getChildList` is called lazily on click (the list may not exist yet, or may be
+// owned by a caller-side closure) and toggles the CSS `.collapsed` class on it.
+// `labels(expanded)` returns { title, ariaLabel } for the current state.
+function createCollapseToggle({ hasChildren, getChildList, labels, noChildrenTitle, noChildrenAriaLabel }) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'node-control node-control-toggle';
+  button.disabled = !hasChildren;
+
+  const applyLabel = (expanded) => {
+    button.textContent = hasChildren ? (expanded ? '−' : '+') : '•';
+    if (hasChildren) {
+      const { title, ariaLabel } = labels(expanded);
+      button.title = title;
+      if (ariaLabel) button.setAttribute('aria-label', ariaLabel);
+    } else {
+      button.title = noChildrenTitle;
+      if (noChildrenAriaLabel) button.setAttribute('aria-label', noChildrenAriaLabel);
+    }
+  };
+  applyLabel(true); // Children render expanded by default.
+
+  if (hasChildren) {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const childList = getChildList();
+      if (!childList) return;
+      childList.classList.toggle('collapsed');
+      applyLabel(!childList.classList.contains('collapsed'));
+    });
+  }
+  button.addEventListener('pointerdown', (event) => event.stopPropagation());
+  return button;
 }
 
 function renderEntityTree(entityType, entity, children, options = {}) {
@@ -365,26 +418,25 @@ function renderEntityTree(entityType, entity, children, options = {}) {
   meta.textContent = options.meta || (entityType === 'enemy' ? 'Enemy drops' : 'Shop inventory');
   main.append(meta);
   main.addEventListener('click', (event) => {
-    if (performance.now() < state.viewport.ignoreClickUntil) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
     event.stopPropagation();
     if (entityType === 'enemy') showMonsterDetails(entity?.name || options.name);
     else if (entityType === 'shop') showShopDetails(entity.name);
   });
+  main.addEventListener('pointerdown', (event) => event.stopPropagation());
   rootCard.append(main);
   rootLi.append(rootCard);
   const controls = document.createElement('div');
   controls.className = 'node-controls';
 
-  const toggleButton = document.createElement('button');
-  toggleButton.type = 'button';
-  toggleButton.className = 'node-control node-control-toggle';
-  toggleButton.textContent = children.length ? '−' : '•';
-  toggleButton.title = children.length ? `Collapse ${entityType === 'enemy' ? 'drops' : 'inventory'}` : 'No entries to collapse';
-  toggleButton.disabled = !children.length;
+  let childList = null;
+  const toggleButton = createCollapseToggle({
+    hasChildren: Boolean(children.length),
+    getChildList: () => childList,
+    labels: (expanded) => ({
+      title: `${expanded ? 'Collapse' : 'Expand'} ${entityType === 'enemy' ? 'drops' : 'inventory'}`,
+    }),
+    noChildrenTitle: 'No entries to collapse',
+  });
 
   const rootButton = document.createElement('button');
   rootButton.type = 'button';
@@ -398,7 +450,7 @@ function renderEntityTree(entityType, entity, children, options = {}) {
   rootCard.append(controls);
 
   if (children.length) {
-    const childList = document.createElement('ul');
+    childList = document.createElement('ul');
     children.forEach((item) => childList.append(renderBranch(item, {
         edgeQuantity: 1,
         totalQuantity: 1,
@@ -406,18 +458,10 @@ function renderEntityTree(entityType, entity, children, options = {}) {
         isRoot: false,
         orientation: TREE_ORIENTATION.FLIPPED_SOURCE,
         showContinuation: true,
+        showRecipeChildren: false,
       })));
     rootLi.append(childList);
-
-    toggleButton.addEventListener('click', (event) => {
-      event.stopPropagation();
-      childList.classList.toggle('collapsed');
-      const expanded = !childList.classList.contains('collapsed');
-      toggleButton.textContent = expanded ? '−' : '+';
-      toggleButton.title = `${expanded ? 'Collapse' : 'Expand'} ${entityType === 'enemy' ? 'drops' : 'inventory'}`;
-    });
   }
-  toggleButton.addEventListener('pointerdown', (event) => event.stopPropagation());
   rootButton.addEventListener('pointerdown', (event) => event.stopPropagation());
   tree.append(rootLi);
   composite.append(tree);
@@ -497,14 +541,10 @@ function createNodeMain(item, fallbackName = 'Unknown item') {
   main.append(name, meta);
 
   main.addEventListener('click', (event) => {
-    if (performance.now() < state.viewport.ignoreClickUntil) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
     event.stopPropagation();
     showItemDetails(item);
   });
+  main.addEventListener('pointerdown', (event) => event.stopPropagation());
   return { main, meta };
 }
 
@@ -512,15 +552,16 @@ function createNodeControls(item, listItem, children) {
   const controls = document.createElement('div');
   controls.className = 'node-controls';
 
-  const toggleButton = document.createElement('button');
-  toggleButton.type = 'button';
-  toggleButton.className = 'node-control node-control-toggle';
-  toggleButton.textContent = children.length ? '−' : '•';
-  toggleButton.title = children.length ? 'Collapse this branch' : 'No branch to collapse';
-  toggleButton.setAttribute('aria-label', children.length
-    ? `Collapse ${item.name || 'branch'}`
-    : `No recipe branch for ${item.name || 'item'}`);
-  toggleButton.disabled = !children.length;
+  const toggleButton = createCollapseToggle({
+    hasChildren: Boolean(children.length),
+    getChildList: () => listItem.querySelector(':scope > ul'),
+    labels: (expanded) => ({
+      title: `${expanded ? 'Collapse' : 'Expand'} this recipe branch`,
+      ariaLabel: `${expanded ? 'Collapse' : 'Expand'} ${item.name || 'branch'}`,
+    }),
+    noChildrenTitle: 'No branch to collapse',
+    noChildrenAriaLabel: `No recipe branch for ${item.name || 'item'}`,
+  });
 
   const rootButton = document.createElement('button');
   rootButton.type = 'button';
@@ -528,20 +569,6 @@ function createNodeControls(item, listItem, children) {
   rootButton.textContent = '↗';
   rootButton.title = `Make ${item.name || 'item'} the center of the tree`;
   rootButton.setAttribute('aria-label', `Make ${item.name || 'item'} the center of the tree`);
-
-  if (children.length) {
-    toggleButton.addEventListener('click', (event) => {
-      event.stopPropagation();
-      const childList = listItem.querySelector(':scope > ul');
-      if (!childList) return;
-      childList.classList.toggle('collapsed');
-      const expanded = !childList.classList.contains('collapsed');
-      toggleButton.textContent = expanded ? '−' : '+';
-      toggleButton.title = `${expanded ? 'Collapse' : 'Expand'} this recipe branch`;
-      toggleButton.setAttribute('aria-label', `${expanded ? 'Collapse' : 'Expand'} ${item.name || 'branch'}`);
-    });
-  }
-  toggleButton.addEventListener('pointerdown', (event) => event.stopPropagation());
 
   rootButton.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -572,10 +599,6 @@ function createContinuation(item, orientation) {
 
 function renderUsageAnchor(item) {
   const listItem = document.createElement('li');
-  const anchor = document.createElement('span');
-  anchor.className = 'usage-anchor';
-  anchor.setAttribute('aria-hidden', 'true');
-  listItem.append(anchor);
   const children = recipesUsing(item);
   if (children.length) {
     const childList = document.createElement('ul');
@@ -626,12 +649,13 @@ function renderBranch(item, context = {}) {
     isRoot = false,
     orientation = TREE_ORIENTATION.NORMAL,
     showContinuation = false,
+    showRecipeChildren = true,
   } = context;
   const listItem = document.createElement('li');
   const code = normalizeCode(item.rawCode);
   // `path` is branch-local, so shared ingredients can repeat while real cycles stop.
   const circular = path.has(code);
-  const children = circular ? [] : recipeChildren(item);
+  const children = circular || !showRecipeChildren ? [] : recipeChildren(item);
   const card = document.createElement('div');
   card.className = `node-card${children.length ? ' craftable' : ''}${isRoot ? ' root' : ''}${circular ? ' cycle' : ''}`;
   card.dataset.rawCode = normalizeCode(item.rawCode);
@@ -1535,9 +1559,7 @@ function bindPanelResizers() {
   if (!workspace) return;
 
   const isDesktop = () => window.matchMedia('(min-width: 981px)').matches;
-  const MIN_SIDE = 280;
-  const MIN_MAP = 180;
-  const GUTTER = 16;
+  const LAYOUT = Object.freeze({ minSide: 280, minMap: 180, gutter: 16, maxSide: 700 });
 
   function getPanels() {
     return {
@@ -1550,8 +1572,8 @@ function bindPanelResizers() {
   function getWidths() {
     const panels = getPanels();
     return {
-      inspector: panels.inspector?.getBoundingClientRect().width || 428,
-      details: panels.details?.getBoundingClientRect().width || 360,
+      inspector: panels.inspector?.getBoundingClientRect().width || 0,
+      details: panels.details?.getBoundingClientRect().width || 0,
     };
   }
 
@@ -1559,25 +1581,25 @@ function bindPanelResizers() {
     if (!isDesktop()) return;
     const hidden = workspace.classList.contains('recipe-map-hidden');
     const total = workspace.getBoundingClientRect().width || window.innerWidth;
-    let left = Math.round(Number(inspectorWidth) || 428);
-    let right = Math.round(Number(detailsWidth) || 360);
+    let left = Math.round(Number(inspectorWidth));
+    let right = Math.round(Number(detailsWidth));
+
+    if (!Number.isFinite(left) || !Number.isFinite(right)) return;
 
     if (hidden) {
-      const available = Math.max(MIN_SIDE * 2, total - 8);
-      left = Math.max(MIN_SIDE, Math.min(available - MIN_SIDE, left));
-      right = Math.max(MIN_SIDE, available - left);
+      const available = Math.max(LAYOUT.minSide * 2, total - 8);
+      left = Math.max(LAYOUT.minSide, Math.min(available - LAYOUT.minSide, left));
+      right = Math.max(LAYOUT.minSide, available - left);
     } else {
-      const maxSideTotal = Math.max(MIN_SIDE * 2, total - MIN_MAP - GUTTER);
-      left = Math.max(MIN_SIDE, Math.min(700, left));
-      right = Math.max(MIN_SIDE, Math.min(700, right));
+      const maxSideTotal = Math.max(LAYOUT.minSide * 2, total - LAYOUT.minMap - LAYOUT.gutter);
+      left = Math.max(LAYOUT.minSide, Math.min(LAYOUT.maxSide, left));
+      right = Math.max(LAYOUT.minSide, Math.min(LAYOUT.maxSide, right));
       if (left + right > maxSideTotal) {
-        if (inspectorWidth !== undefined && detailsWidth !== undefined) {
-          const excess = left + right - maxSideTotal;
-          if (left >= right) left -= excess;
-          else right -= excess;
-        }
-        left = Math.max(MIN_SIDE, left);
-        right = Math.max(MIN_SIDE, right);
+        const excess = left + right - maxSideTotal;
+        if (left >= right) left -= excess;
+        else right -= excess;
+        left = Math.max(LAYOUT.minSide, left);
+        right = Math.max(LAYOUT.minSide, right);
       }
     }
 
@@ -1587,8 +1609,8 @@ function bindPanelResizers() {
 
   function bindResizer(handle, panelKey) {
     if (!handle) return;
-    handle.setAttribute('aria-valuemin', String(MIN_SIDE));
-    handle.setAttribute('aria-valuemax', '700');
+    handle.setAttribute('aria-valuemin', String(LAYOUT.minSide));
+    handle.setAttribute('aria-valuemax', String(LAYOUT.maxSide));
 
     let pointerId = null;
     let startX = 0;
@@ -1654,11 +1676,16 @@ function bindPanelResizers() {
   }
 
   try {
-    const savedLeft = Number(localStorage.getItem('hellfire-inspector-width'));
-    const savedRight = Number(localStorage.getItem('hellfire-details-width'));
-    const widths = getWidths();
-    applyWidths(Number.isFinite(savedLeft) ? savedLeft : widths.inspector,
-                Number.isFinite(savedRight) ? savedRight : widths.details);
+    const savedLeftRaw = localStorage.getItem('hellfire-inspector-width');
+    const savedRightRaw = localStorage.getItem('hellfire-details-width');
+    const savedLeft = Number(savedLeftRaw);
+    const savedRight = Number(savedRightRaw);
+    if (savedLeftRaw !== null && Number.isFinite(savedLeft)) {
+      workspace.style.setProperty('--inspector-width', `${Math.round(savedLeft)}px`);
+    }
+    if (savedRightRaw !== null && Number.isFinite(savedRight)) {
+      workspace.style.setProperty('--details-width', `${Math.round(savedRight)}px`);
+    }
   } catch {}
 
   bindResizer(elements.inspectorResizer, 'inspector');
@@ -1749,21 +1776,27 @@ function bindRecipeMapToggle() {
       // their ratio.
       const total = workspace.getBoundingClientRect().width || window.innerWidth;
       const available = Math.max(560, total - 8);
-      const currentLeft = elements.inspector?.getBoundingClientRect().width || 428;
+      const currentLeft = elements.inspector?.getBoundingClientRect().width || 0;
       const left = Math.max(280, Math.min(available - 280, Math.round(currentLeft)));
       const right = Math.max(280, Math.round(available - left));
       workspace.style.setProperty('--inspector-width', `${left}px`);
       workspace.style.setProperty('--details-width', `${right}px`);
     } else {
       try {
-        const left = Number(localStorage.getItem('hellfire-inspector-width'));
-        const right = Number(localStorage.getItem('hellfire-details-width'));
-        const widths = {
-          inspector: Number.isFinite(left) ? left : 428,
-          details: Number.isFinite(right) ? right : 360,
-        };
-        workspace.style.setProperty('--inspector-width', `${widths.inspector}px`);
-        workspace.style.setProperty('--details-width', `${widths.details}px`);
+        const leftRaw = localStorage.getItem('hellfire-inspector-width');
+        const rightRaw = localStorage.getItem('hellfire-details-width');
+        const left = Number(leftRaw);
+        const right = Number(rightRaw);
+        if (leftRaw !== null && Number.isFinite(left)) {
+          workspace.style.setProperty('--inspector-width', `${Math.round(left)}px`);
+        } else {
+          workspace.style.removeProperty('--inspector-width');
+        }
+        if (rightRaw !== null && Number.isFinite(right)) {
+          workspace.style.setProperty('--details-width', `${Math.round(right)}px`);
+        } else {
+          workspace.style.removeProperty('--details-width');
+        }
       } catch {}
     }
     requestAnimationFrame(() => {
@@ -1791,7 +1824,7 @@ function formatStatValue(key, value) {
 }
 
 function getOwnedQuantity(item) {
-  const code = normalizeCode(item?.rawCode) || normalizeText(item?.name);
+  const code = itemKey(item);
   return Math.max(0, Number(state.craftOwned.get(code)) || 0);
 }
 
@@ -1801,7 +1834,7 @@ function setOwnedQuantity(item, quantity) {
 }
 
 function writeOwnedQuantity(item, quantity) {
-  const code = normalizeCode(item?.rawCode) || normalizeText(item?.name);
+  const code = itemKey(item);
   if (!code) return;
   const next = Math.max(0, Math.floor(Number(quantity) || 0));
   if (next === 0) state.craftOwned.delete(code);
@@ -1824,7 +1857,7 @@ function buildNestedEntities(root) {
   const entities = [];
   function visit(item, required, key, depth, ancestorCodes, parentKey = null, perParent = 1) {
     if (!item) return;
-    const code = normalizeCode(item.rawCode) || normalizeText(item.name);
+    const code = itemKey(item);
     const cycle = !code || ancestorCodes.has(code);
     const entity = { item, required: Math.max(1, Math.floor(Number(required) || 1)), key, depth, parentKey, perParent, cycle, children: [] };
     entities.push(entity);
@@ -1846,9 +1879,9 @@ function cascadeNestedEntityQuantity(item, key, units) {
   const amount = Math.max(0, Math.floor(Number(units) || 0));
   writeNestedEntityQuantity(key, amount);
   if (!item?.recipe?.length) return;
-  const code = normalizeCode(item.rawCode) || normalizeText(item.name);
+  const code = itemKey(item);
   const walk = (node, parentKey, multiplier, pathCodes) => {
-    const nodeCode = normalizeCode(node.rawCode) || normalizeText(node.name);
+    const nodeCode = itemKey(node);
     if (!nodeCode || pathCodes.has(nodeCode) || !node.recipe?.length) return;
     const nextCodes = new Set(pathCodes); nextCodes.add(nodeCode);
     recipeChildren(node).forEach(({ item: child, quantity }, index) => {
@@ -1907,23 +1940,23 @@ function setNestedEntityQuantity(item, key, required, quantity) {
   renderMaterials(state.ui.selected);
 }
 
+// Single source of truth for wiping both owned-quantity stores. Quick-view recipe
+// switches and the explicit "reset all" button both reduce to this.
+function clearOwnedQuantities() {
+  state.craftOwned.clear();
+  state.nestedOwned.clear();
+}
+
 function beginQuickViewRecipe(item) {
   // Quick-view ownership is temporary and scoped to the currently selected recipe.
   // Switching recipes always starts from 0 and does not become persistent planner data.
-  state.craftOwned = new Map();
-  state.nestedOwned = new Map();
+  clearOwnedQuantities();
 }
 
 function resetAllOwnedQuantities() {
-  state.craftOwned.clear();
-  state.nestedOwned.clear();
+  clearOwnedQuantities();
   state.nestedExpanded = new Set();
   renderMaterials(state.ui.selected);
-}
-
-function loadCraftOwned() {
-  state.craftOwned = new Map();
-  state.nestedOwned = new Map();
 }
 
 function createOwnedControl(item, required, compact = false, options = {}) {
@@ -2107,36 +2140,25 @@ function bindSummarySettings() {
     elements.summarySettingsPanel.hidden = open;
     elements.summarySettingsToggle.setAttribute('aria-expanded', String(!open));
   });
-  elements.summarySortMode?.addEventListener('change', () => {
-    state.summarySort.mode = elements.summarySortMode.value === 'quantity' ? 'quantity' : 'rarity';
-    saveSummarySettings();
-    renderMaterials(state.ui.selected);
+  // Every summary-setting control follows the same pattern: read its value/checked
+  // state into `state`, persist, then re-render. Declare the mapping once instead
+  // of repeating the same three-line handler six times.
+  const settingBindings = [
+    { element: elements.summarySortMode, apply: () => { state.summarySort.mode = elements.summarySortMode.value === 'quantity' ? 'quantity' : 'rarity'; } },
+    { element: elements.summaryQuantityOrder, apply: () => { state.summarySort.quantityOrder = elements.summaryQuantityOrder.value; } },
+    { element: elements.summaryRarityOrder, apply: () => { state.summarySort.rarityOrder = elements.summaryRarityOrder.value; } },
+    { element: elements.summarySyncNested, apply: () => { state.summarySyncNested = elements.summarySyncNested.checked; } },
+    { element: elements.summaryDeprioritizeCompleted, apply: () => { state.summaryDeprioritizeCompleted = elements.summaryDeprioritizeCompleted.checked; } },
+    { element: elements.summaryDimCompleted, apply: () => { state.summaryDimCompleted = elements.summaryDimCompleted.checked; } },
+  ];
+  settingBindings.forEach(({ element, apply }) => {
+    element?.addEventListener('change', () => {
+      apply();
+      saveSummarySettings();
+      renderMaterials(state.ui.selected);
+    });
   });
-  elements.summaryQuantityOrder?.addEventListener('change', () => {
-    state.summarySort.quantityOrder = elements.summaryQuantityOrder.value;
-    saveSummarySettings();
-    renderMaterials(state.ui.selected);
-  });
-  elements.summaryRarityOrder?.addEventListener('change', () => {
-    state.summarySort.rarityOrder = elements.summaryRarityOrder.value;
-    saveSummarySettings();
-    renderMaterials(state.ui.selected);
-  });
-  elements.summarySyncNested?.addEventListener('change', () => {
-    state.summarySyncNested = elements.summarySyncNested.checked;
-    saveSummarySettings();
-    renderMaterials(state.ui.selected);
-  });
-  elements.summaryDeprioritizeCompleted?.addEventListener('change', () => {
-    state.summaryDeprioritizeCompleted = elements.summaryDeprioritizeCompleted.checked;
-    saveSummarySettings();
-    renderMaterials(state.ui.selected);
-  });
-  elements.summaryDimCompleted?.addEventListener('change', () => {
-    state.summaryDimCompleted = elements.summaryDimCompleted.checked;
-    saveSummarySettings();
-    renderMaterials(state.ui.selected);
-  });
+
   elements.summaryResetOwned?.addEventListener('click', () => resetAllOwnedQuantities());
 }
 
@@ -2187,14 +2209,13 @@ function collectSyncedBaseMaterials(root) {
   // its parent. Base Materials then aggregates the effective leaf quantities
   // of all occurrences with the same item code.
   const totals = new Map();
-  const keyOf = (item) => normalizeCode(item?.rawCode) || normalizeText(item?.name);
 
   function visit(item, required, key, inheritedUnits, ancestorCodes) {
     if (!item) return;
     const ownUnits = getNestedEntityQuantity(key);
     const effectiveUnits = Math.max(ownUnits, Math.max(0, Number(inheritedUnits) || 0));
     const cappedUnits = Math.min(Math.max(1, Math.floor(Number(required) || 1)), Math.floor(effectiveUnits));
-    const code = keyOf(item);
+    const code = itemKey(item);
     if (!code || ancestorCodes.has(code)) return;
 
     if (!item.recipe?.length) {
@@ -2252,7 +2273,7 @@ function createNestedCraftRow(item, required, depth, path, ancestorPath) {
   const requiredAmount = Math.max(1, Math.floor(Number(required) || 1));
   const nestedOwned = getNestedEntityQuantity(branchKey);
   if (state.summaryDimCompleted && nestedOwned >= requiredAmount) row.classList.add('completed-material');
-  const code = normalizeCode(item.rawCode) || normalizeText(item.name);
+  const code = itemKey(item);
   const hasRecipe = Boolean(item.recipe?.length);
   const cycle = ancestorPath.has(code);
   const expanded = hasRecipe && !cycle && state.nestedExpanded.has(branchKey);
@@ -2282,21 +2303,11 @@ function createNestedCraftRow(item, required, depth, path, ancestorPath) {
 
   // Checkbox is deliberately placed immediately before the item/icon.
   const ownedControl = createOwnedControl(item, requiredAmount, true, {
-    nested: true,
     getQuantity: () => getNestedEntityQuantity(branchKey),
     setQuantity: (value) => setNestedEntityQuantity(item, branchKey, requiredAmount, value),
   });
-  const checkbox = ownedControl.querySelector('.owned-check');
   const quantityControls = ownedControl.querySelector('.owned-quantity-controls');
-  if (checkbox) {
-    checkbox.addEventListener('click', (event) => event.stopPropagation());
-    checkbox.addEventListener('change', (event) => event.stopPropagation());
-  }
-  if (quantityControls) {
-    quantityControls.classList.add('nested-quantity');
-    quantityControls.addEventListener('click', (event) => event.stopPropagation());
-    quantityControls.addEventListener('wheel', (event) => event.stopPropagation(), { passive: true });
-  }
+  if (quantityControls) quantityControls.classList.add('nested-quantity');
   // Keep the complete ownership control inside the item card. This prevents
   // the quantity field from creating a dead grid area outside the card and
   // guarantees the checkbox, value and required amount share the card background.
@@ -2352,7 +2363,7 @@ function applySummaryTab() {
 function collectBaseMaterials(root) {
   const totals = new Map();
   const visit = (item, multiplier, path) => {
-    const code = normalizeCode(item.rawCode) || normalizeText(item.name);
+    const code = itemKey(item);
     if (path.has(code) || !item.recipe?.length) {
       const existing = totals.get(code) || { item, quantity: 0 };
       existing.quantity += multiplier; totals.set(code, existing); return;
@@ -2367,7 +2378,7 @@ function collectBaseMaterials(root) {
 function recipeStats(root) {
   const materials = collectBaseMaterials(root);
   const walk = (item, path) => {
-    const code = normalizeCode(item.rawCode) || normalizeText(item.name);
+    const code = itemKey(item);
     if (path.has(code) || !item.recipe?.length) return { depth: 1, nodes: 1 };
     const nextPath = new Set(path);
     nextPath.add(code);
@@ -2607,9 +2618,6 @@ function moveDrag(event) {
 
 function stopDrag(event) {
   if (!state.viewport.drag || state.viewport.drag.pointerId !== event.pointerId) return;
-  if (state.viewport.drag.moved) {
-    state.viewport.ignoreClickUntil = performance.now() + 180;
-  }
   state.viewport.drag = null; elements.viewport.classList.remove('dragging');
 }
 
@@ -2642,6 +2650,10 @@ function isPlayerFacing(item) {
 function cleanMapName(value) { return String(value || 'Hellfire RPG').replace(/\.w3x$/i, ''); }
 function normalizeText(value) { return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 function normalizeCode(value) { return String(value || '').trim().toLowerCase(); }
+// Canonical identity for an item: prefer its map code, fall back to its normalized
+// name. Every piece of code that needs to key/compare/deduplicate items should use
+// this instead of re-deriving the same fallback chain locally.
+function itemKey(item) { return normalizeCode(item?.rawCode) || normalizeText(item?.name); }
 function clamp(value, minimum, maximum) { return Math.max(minimum, Math.min(maximum, value)); }
 
 function showError(message) {
@@ -2657,7 +2669,7 @@ function registerWebMcpTool() {
     void Promise.resolve(context.registerTool({
       name: 'select_crafted_item',
       title: 'Select crafted item',
-      description: 'Select a Hellfire RPG crafted item and display its recursive ingredient tree and direct crafting usages.',
+      description: 'Select a Hellfire RPG crafted item and display its complete recursive ingredient and upgrade trees.',
       inputSchema: {
         type: 'object',
         properties: { itemName: { type: 'string', description: 'The crafted item name to select.' } },
@@ -2683,4 +2695,4 @@ function registerWebMcpTool() {
   }
 }
 
-loadCraftOwned();
+

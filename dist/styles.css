@@ -5,6 +5,7 @@
 
 :root{
   color-scheme:dark;
+  --panel-width:min(450px,calc((100vw - 196px) / 2));
   --bg:#0f0d0b;
   --panel:#181512;
   --raised:#211c17;
@@ -253,7 +254,7 @@ button{color:inherit}
   height:calc(100vh - 78px);
   min-height:0;
   display:grid;
-  grid-template-columns:var(--inspector-width,428px) 8px minmax(180px,1fr) 8px var(--details-width,360px);
+  grid-template-columns:var(--inspector-width,var(--panel-width)) 8px minmax(180px,1fr) 8px var(--details-width,var(--panel-width));
   overflow:hidden;
 }
 
@@ -297,7 +298,7 @@ button{color:inherit}
   background:transparent;
 }
 .workspace.recipe-map-hidden{
-  grid-template-columns:var(--inspector-width,428px) 0 minmax(0,1fr) 0 var(--details-width,360px);
+  grid-template-columns:var(--inspector-width,var(--panel-width)) 0 minmax(0,1fr) 0 var(--details-width,var(--panel-width));
 }
 .workspace.recipe-map-hidden .tree-panel{
   display:none;
@@ -357,6 +358,16 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
   border-radius:9px;
   background:linear-gradient(135deg,#251b14,#181411);
   box-shadow:var(--shadow);
+  cursor:pointer;
+}
+
+.selected-card:hover{
+  border-color:var(--ember);
+}
+
+.selected-card:focus-visible{
+  outline:2px solid var(--ember);
+  outline-offset:2px;
 }
 
 .selected-card img,
@@ -380,6 +391,14 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
 .selected-copy h2{
   margin:0;
   font:700 1.12rem/1.22 Georgia,serif;
+}
+
+.selected-copy h2,
+.details-item-heading h3{
+  min-width:0;
+  max-width:100%;
+  overflow-wrap:anywhere;
+  word-break:break-word;
 }
 
 .item-meta{
@@ -506,13 +525,6 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
   color:var(--faint);
   font-size:.76rem;
   font-weight:400;
-}
-
-.material-qty{
-  min-width:34px;
-  color:var(--gold);
-  font:700 1.04rem Georgia,serif;
-  text-align:right;
 }
 
 .empty-note{
@@ -778,13 +790,6 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
 }
 
 /* The anchor itself is deliberately invisible. */
-.usage-anchor{
-  display:block;
-  width:1px;
-  height:1px;
-  margin:0 auto;
-}
-
 /*
  * The ingredient tree follows the usage tree in the composite. Keep only the
  * small intentional gap/bridge between the two sections. The old pseudo
@@ -999,8 +1004,6 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
   font-size:.72rem;
   font-weight:850;
 }
-
-.collapse-mark{display:none}
 
 /* ==========================================================================
    Continuation marker
@@ -1284,34 +1287,6 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
    Entity / inline links
    ========================================================================== */
 
-.entity-link{
-  display:inline-flex;
-  align-items:center;
-  gap:4px;
-  margin:0 1px;
-  padding:0 3px;
-  border:0;
-  border-radius:4px;
-  color:var(--bright);
-  background:rgba(239,127,45,.08);
-  font:inherit;
-  font-weight:650;
-  cursor:pointer;
-}
-
-.entity-link:hover{
-  background:rgba(239,127,45,.18);
-  text-decoration:underline;
-}
-
-.entity-inline-icon{
-  width:18px;
-  height:18px;
-  border-radius:3px;
-  object-fit:cover;
-  vertical-align:-4px;
-}
-
 .entity-list{
   display:grid;
   gap:6px;
@@ -1388,12 +1363,7 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
 
 .details-usage-list .usage-entity-row{cursor:pointer}
 
-.entity-inline-placeholder,
-.entity-mini-placeholder,
-.enemy-mini-placeholder,
-.details-placeholder,
-.shop-icon-placeholder,
-.enemy-icon-placeholder{
+.details-placeholder{
   display:inline-flex;
   align-items:center;
   justify-content:center;
@@ -1409,30 +1379,6 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
   line-height:1;
   text-align:center;
   vertical-align:middle;
-}
-
-.entity-inline-placeholder{
-  width:18px;
-  height:18px;
-  min-width:18px;
-  min-height:18px;
-  font-size:.65rem;
-}
-
-.entity-mini-placeholder{
-  width:18px;
-  height:18px;
-  min-width:18px;
-  min-height:18px;
-  font-size:.68rem;
-}
-
-.enemy-mini-placeholder{
-  flex:0 0 18px;
-  font-size:.65rem;
-}
-
-.details-placeholder{
   flex:0 0 auto;
   overflow:hidden;
 }
@@ -1614,37 +1560,6 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
    Shop details
    ========================================================================== */
 
-.shop-overview-grid{
-  display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
-  gap:6px;
-}
-
-.shop-overview-stat{
-  min-width:0;
-  padding:9px;
-  border:1px solid var(--line);
-  border-radius:6px;
-  background:#141210;
-}
-
-.shop-overview-stat span,
-.shop-overview-stat strong{display:block}
-
-.shop-overview-stat span{
-  color:var(--muted);
-  font-size:.7rem;
-}
-
-.shop-overview-stat strong{
-  margin-top:3px;
-  overflow:hidden;
-  color:var(--text);
-  font:700 .86rem Georgia,serif;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-
 .shop-category{margin-top:10px}
 .shop-category:first-child{margin-top:2px}
 
@@ -1689,12 +1604,6 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
   white-space:nowrap;
 }
 
-.details-chip-list{
-  display:flex;
-  flex-wrap:wrap;
-  gap:6px;
-}
-
 .details-related-list .related-entity-row{
   cursor:pointer;
 }
@@ -1703,23 +1612,7 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
    Entity roots
    ========================================================================== */
 
-.entity-root-tree>li>.entity-tree-root{
-  min-width:190px;
-  border-color:var(--strong);
-}
-
 .entity-root-tree>li>ul{margin-top:8px}
-
-.entity-tree-root .node-name{font-weight:800}
-.entity-tree-root .node-meta{color:var(--gold)}
-
-.enemy-tree-root{
-  background:linear-gradient(135deg,#241719,#171113);
-}
-
-.shop-tree-root{
-  background:linear-gradient(135deg,#241d14,#17130f);
-}
 
 /* ==========================================================================
    Responsive
@@ -1730,9 +1623,6 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
     grid-template-columns:250px minmax(260px,1fr) auto auto;
   }
 
-  .workspace{
-    grid-template-columns:var(--inspector-width,350px) 8px minmax(180px,1fr) 8px var(--details-width,310px);
-  }
 }
 
 @media(max-width:980px){
@@ -1859,8 +1749,7 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
 
 @media(max-width:560px){
   .enemy-reward-card{grid-template-columns:1fr}
-  .shop-overview-grid{grid-template-columns:1fr}
-  .shop-price{margin-left:50px}
+.shop-price{margin-left:50px}
 }
 
 @media(prefers-reduced-motion:reduce){
@@ -1949,14 +1838,19 @@ body.resizing-panels *{cursor:col-resize !important;user-select:none !important}
 
 @media(min-width:981px){
   .workspace{display:flex;flex-direction:row;align-items:stretch;height:calc(100vh - 78px);overflow:hidden;min-width:0}
-  .workspace>.inspector,.workspace>.details-panel{flex:0 0 var(--inspector-width,428px);width:var(--inspector-width,428px);box-sizing:border-box}
-  .workspace>.details-panel{flex-basis:var(--details-width,360px);width:var(--details-width,360px)}
+  /* min-width:280px (not 0) is deliberate: the general `.workspace > .inspector,
+     .tree-panel, .details-panel{min-width:0}` rule earlier in this file exists so
+     the tree panel can shrink, but it also strips these two panels' protection
+     against rendering below their flex-basis on a transient first layout pass.
+     280px mirrors MIN_SIDE in app.js, so this can never fight the JS-computed width. */
+  .workspace>.inspector,.workspace>.details-panel{flex:0 0 var(--inspector-width,var(--panel-width));width:var(--inspector-width,var(--panel-width));min-width:280px;box-sizing:border-box}
+  .workspace>.details-panel{flex-basis:var(--details-width,var(--panel-width));width:var(--details-width,var(--panel-width))}
   .workspace>.tree-panel{flex:1 1 auto;width:auto;min-width:180px;overflow:hidden}
   .workspace>.panel-resizer{flex:0 0 8px;width:8px;order:initial}
   .workspace.recipe-map-hidden>.tree-panel{display:none}
   .workspace.recipe-map-hidden>.details-resizer{display:none}
-  .workspace.recipe-map-hidden>.inspector{flex:0 0 var(--inspector-width,428px);width:var(--inspector-width,428px);min-width:0}
-  .workspace.recipe-map-hidden>.details-panel{flex:0 0 var(--details-width,360px);width:var(--details-width,360px);min-width:0}
+  .workspace.recipe-map-hidden>.inspector{flex:0 0 var(--inspector-width,var(--panel-width));width:var(--inspector-width,var(--panel-width));min-width:280px}
+  .workspace.recipe-map-hidden>.details-panel{flex:0 0 var(--details-width,var(--panel-width));width:var(--details-width,var(--panel-width));min-width:280px}
   .workspace.recipe-map-hidden>.inspector-resizer{display:block!important;flex:0 0 8px;width:8px;min-width:8px}
   .inspector{container-type:inline-size;container-name:craft-summary-panel}
 }
